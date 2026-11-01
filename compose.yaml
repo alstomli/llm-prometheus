@@ -1,0 +1,24 @@
+services:
+  prometheus:
+    image: zihan000/llm-prometheus:local
+    build: .
+    restart: unless-stopped
+    environment:
+      PORT: '9090'
+      RUNPOD_METRICS_TARGET: ${RUNPOD_METRICS_TARGET:?Set RUNPOD_METRICS_TARGET}
+      RUNPOD_METRICS_TOKEN: ${RUNPOD_METRICS_TOKEN:?Set RUNPOD_METRICS_TOKEN}
+      METRICS_RETENTION_TIME: ${METRICS_RETENTION_TIME:-7d}
+      METRICS_RETENTION_SIZE: ${METRICS_RETENTION_SIZE:-512MB}
+    networks:
+      - monitoring
+    ports:
+      - '127.0.0.1:9090:9090'
+    volumes:
+      - prometheus-data:/prometheus
+volumes:
+  prometheus-data:
+    name: ${PROMETHEUS_VOLUME_NAME:-monitoring_prometheus-data}
+networks:
+  monitoring:
+    external: true
+    name: llm-monitoring
