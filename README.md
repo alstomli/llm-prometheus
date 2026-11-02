@@ -33,7 +33,7 @@ the running service or its persistent metrics history.
 ## Railway
 
 - Service name `prometheus`, `PORT=9090`, persistent volume `/prometheus`.
-- `RUNPOD_METRICS_TARGET=fj04zaugwd1u83-8888.proxy.runpod.net` (hostname only).
+- `RUNPOD_METRICS_TARGET=rp93m3noz3l9lt-8888.proxy.runpod.net` (hostname only).
 - `RUNPOD_METRICS_TOKEN` must match the Pod's `/workspace/monitoring/metrics-token`.
 - Defaults: `METRICS_RETENTION_TIME=7d`, `METRICS_RETENTION_SIZE=512MB`.
   The size limit covers TSDB blocks; WAL and head data also consume volume space.
