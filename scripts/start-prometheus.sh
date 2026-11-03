@@ -1,10 +1,16 @@
 #!/bin/sh
 set -eu
+set -f
 : "${RUNPOD_METRICS_TOKEN:?Set the private metrics token in Railway variables}"
-: "${RUNPOD_METRICS_TARGET:?Set the Runpod metrics hostname without a scheme or path}"
-case "$RUNPOD_METRICS_TARGET" in
-  *[!a-zA-Z0-9.-]*) echo 'Invalid metrics hostname' >&2; exit 1 ;;
+targets="${RUNPOD_METRICS_TARGETS:-${RUNPOD_METRICS_TARGET:-}}"
+case "$targets" in
+  ''|,*|*,|*,,*|*[!a-zA-Z0-9.,-]*)
+    echo 'Set metrics target hostnames as a comma-separated list, without schemes or paths.' >&2
+    exit 1 ;;
 esac
+IFS=,
+set -- $targets
+unset IFS
 umask 077
 printf '%s' "$RUNPOD_METRICS_TOKEN" > /tmp/metrics-token
 cat > /tmp/prometheus.yml <<EOF
@@ -18,8 +24,11 @@ scrape_configs:
       type: Bearer
       credentials_file: /tmp/metrics-token
     static_configs:
-      - targets: ["$RUNPOD_METRICS_TARGET"]
+      - targets:
 EOF
+for target do
+  printf '          - "%s"\n' "$target" >> /tmp/prometheus.yml
+done
 exec /bin/prometheus \
   --config.file=/tmp/prometheus.yml \
   --web.listen-address="[::]:${PORT:-9090}" \
