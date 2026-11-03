@@ -1,0 +1,14 @@
+name: Prometheus configuration checks
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: |
+          sh -n scripts/start-prometheus.sh
+          python scripts/test_start_prometheus.py

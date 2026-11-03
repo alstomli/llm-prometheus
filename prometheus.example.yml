@@ -8,4 +8,6 @@ scrape_configs:
       type: Bearer
       credentials_file: /tmp/metrics-token
     static_configs:
-      - targets: ["fj04zaugwd1u83-8888.proxy.runpod.net"]
+      - targets:
+          - "rp93m3noz3l9lt-8888.proxy.runpod.net"
+          - "ftntkktzid9f4p-8889.proxy.runpod.net"
