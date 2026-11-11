@@ -1,0 +1,341 @@
+rule_files:
+- flux2-alerts.yml
+evaluation_interval: 1m
+tests:
+- name: Scrape failure waits two minutes and ignores chat targets
+  interval: 1m
+  input_series:
+  - series: up{job="flux2",instance="flux.example"}
+    values: 0+0x20
+  - series: up{job="vllm",instance="flux.example"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: Flux2ScrapeDown
+    exp_alerts: []
+  - eval_time: 2m
+    alertname: Flux2ScrapeDown
+    exp_alerts:
+    - exp_labels:
+        instance: flux.example
+        job: flux2
+        severity: critical
+      exp_annotations:
+        summary: FLUX.2 metrics scrape is down on flux.example
+        description: Check the Pod, metrics port, proxy and dedicated scrape credential.
+- name: Cold startup grace then readiness alert
+  interval: 1m
+  input_series:
+  - series: up{job="flux2",instance="flux.example"}
+    values: 1+0x20
+  - series: flux2_model_ready{job="flux2",instance="flux.example"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 14m
+    alertname: Flux2ModelNotReady
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: Flux2ModelNotReady
+    exp_alerts:
+    - exp_labels:
+        instance: flux.example
+        job: flux2
+        severity: critical
+      exp_annotations:
+        summary: FLUX.2 model remains unready on flux.example
+        description: Inspect loading, BF16/device validation and worker health. Do
+          not enable offloading as a fallback.
+- name: Readiness and collector alerts suppressed if scrape down
+  interval: 1m
+  input_series:
+  - series: up{job="flux2",instance="flux.example"}
+    values: 0+0x20
+  - series: flux2_model_ready{job="flux2",instance="flux.example"}
+    values: 0+0x20
+  - series: gpu_exporter_up{job="flux2",instance="flux.example"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: Flux2ModelNotReady
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: Flux2GpuCollectorDown
+    exp_alerts: []
+- name: GPU collector failure is separate from service readiness
+  interval: 1m
+  input_series:
+  - series: up{job="flux2",instance="flux.example"}
+    values: 1+0x10
+  - series: gpu_exporter_up{job="flux2",instance="flux.example"}
+    values: 0+0x10
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: Flux2GpuCollectorDown
+    exp_alerts: []
+  - eval_time: 2m
+    alertname: Flux2GpuCollectorDown
+    exp_alerts:
+    - exp_labels:
+        instance: flux.example
+        job: flux2
+        severity: warning
+      exp_annotations:
+        summary: FLUX.2 GPU collection failed on flux.example
+        description: Check nvidia-smi and GPU visibility; service reachability alone
+          does not prove GPU health.
+- name: Both disk thresholds have separate hold times
+  interval: 1m
+  input_series:
+  - series: flux2_disk_available_bytes{job="flux2",instance="flux.example"}
+    values: 2147483648+0x10
+  alert_rule_test:
+  - eval_time: 0m
+    alertname: Flux2DiskCritical
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: Flux2DiskCritical
+    exp_alerts:
+    - exp_labels:
+        instance: flux.example
+        job: flux2
+        severity: critical
+      exp_annotations:
+        summary: FLUX.2 output disk has less than 3 GiB available on flux.example
+        description: Restore disk headroom before accepting additional work.
+  - eval_time: 4m
+    alertname: Flux2DiskLow
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: Flux2DiskLow
+    exp_alerts:
+    - exp_labels:
+        instance: flux.example
+        job: flux2
+        severity: warning
+      exp_annotations:
+        summary: FLUX.2 output disk has less than 10 GiB available on flux.example
+        description: Check retention cleanup and output filesystem capacity.
+- name: Repeated generation failures alert after hold
+  interval: 1m
+  input_series:
+  - series: flux2_jobs_failed_total{job="flux2",instance="flux.example",reason="generation_error"}
+    values: 0+1x15
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: Flux2GenerationFailures
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: Flux2GenerationFailures
+    exp_alerts:
+    - exp_labels:
+        instance: flux.example
+        severity: warning
+        job: flux2
+      exp_annotations:
+        summary: FLUX.2 generation failures increased on flux.example
+        description: At least three worker errors, OOMs, timeouts or interrupted jobs
+          occurred in ten minutes.
+- name: Healthy service and normal user errors stay quiet
+  interval: 1m
+  input_series:
+  - series: up{job="flux2",instance="flux.example"}
+    values: 1+0x20
+  - series: flux2_model_ready{job="flux2",instance="flux.example"}
+    values: 1+0x20
+  - series: gpu_exporter_up{job="flux2",instance="flux.example"}
+    values: 1+0x20
+  - series: flux2_disk_available_bytes{job="flux2",instance="flux.example"}
+    values: 21474836480+0x20
+  - series: flux2_jobs_failed_total{job="flux2",instance="flux.example",reason="prompt_too_long"}
+    values: 0+10x20
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: Flux2ScrapeDown
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: Flux2ModelNotReady
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: Flux2GpuCollectorDown
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: Flux2GenerationFailures
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: Flux2DiskLow
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: Flux2DiskCritical
+    exp_alerts: []
+- name: Missing readiness metric fires then recovers when exporter contract is restored
+  interval: 1m
+  input_series:
+  - series: up{job="flux2",instance="flux.example"}
+    values: 1+0x5
+  - series: gpu_exporter_up{job="flux2",instance="flux.example"}
+    values: 1+0x5
+  - series: flux2_model_ready{job="flux2",instance="flux.example"}
+    values: _ _ _ 1 1 1
+  - series: flux2_oom_total{job="flux2",instance="flux.example"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: Flux2RequiredMetricsMissing
+    exp_alerts: []
+  - eval_time: 2m
+    alertname: Flux2RequiredMetricsMissing
+    exp_alerts:
+    - exp_labels:
+        job: flux2
+        instance: flux.example
+        severity: critical
+      exp_annotations:
+        summary: FLUX.2 required monitoring data is missing
+        description: The configured image scrape has no up series, or a reachable
+          exporter omitted model readiness, GPU collector health or the OOM counter.
+          Check the target and exporter contract.
+  - eval_time: 3m
+    alertname: Flux2RequiredMetricsMissing
+    exp_alerts: []
+- name: Missing GPU health metric fires
+  interval: 1m
+  input_series:
+  - series: up{job="flux2",instance="flux.example"}
+    values: 1+0x4
+  - series: flux2_model_ready{job="flux2",instance="flux.example"}
+    values: 1+0x4
+  - series: flux2_oom_total{job="flux2",instance="flux.example"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: Flux2RequiredMetricsMissing
+    exp_alerts:
+    - exp_labels:
+        job: flux2
+        instance: flux.example
+        severity: critical
+      exp_annotations:
+        summary: FLUX.2 required monitoring data is missing
+        description: The configured image scrape has no up series, or a reachable
+          exporter omitted model readiness, GPU collector health or the OOM counter.
+          Check the target and exporter contract.
+- name: Configured rule detects missing up series without instance labels
+  interval: 1m
+  input_series: []
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: Flux2RequiredMetricsMissing
+    exp_alerts: []
+  - eval_time: 2m
+    alertname: Flux2RequiredMetricsMissing
+    exp_alerts:
+    - exp_labels:
+        job: flux2
+        severity: critical
+      exp_annotations:
+        summary: FLUX.2 required monitoring data is missing
+        description: The configured image scrape has no up series, or a reachable
+          exporter omitted model readiness, GPU collector health or the OOM counter.
+          Check the target and exporter contract.
+- name: Failed scrape uses scrape-down alert rather than missing metrics
+  interval: 1m
+  input_series:
+  - series: up{job="flux2",instance="flux.example"}
+    values: 0+0x4
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: Flux2RequiredMetricsMissing
+    exp_alerts: []
+- name: Loading and failed collectors still expose required metric names
+  interval: 1m
+  input_series:
+  - series: up{job="flux2",instance="flux.example"}
+    values: 1+0x4
+  - series: flux2_model_ready{job="flux2",instance="flux.example"}
+    values: 0+0x4
+  - series: gpu_exporter_up{job="flux2",instance="flux.example"}
+    values: 0+0x4
+  - series: flux2_oom_total{job="flux2",instance="flux.example"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: Flux2RequiredMetricsMissing
+    exp_alerts: []
+- name: One OOM fires immediately and clears outside event window
+  interval: 1m
+  input_series:
+  - series: flux2_oom_total{job="flux2",instance="flux.example"}
+    values: 0 1+0x20
+  alert_rule_test:
+  - eval_time: 0m
+    alertname: Flux2OutOfMemory
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: Flux2OutOfMemory
+    exp_alerts:
+    - exp_labels:
+        job: flux2
+        instance: flux.example
+        severity: critical
+      exp_annotations:
+        summary: FLUX.2 encountered GPU out-of-memory on flux.example
+        description: An OOM occurred during model loading, warmup or generation. Inspect
+          GPU allocation and the failed operation before admitting more work; do not
+          enable quantization or offloading.
+  - eval_time: 15m
+    alertname: Flux2OutOfMemory
+    exp_alerts: []
+- name: OOM before first successful scrape is still detected
+  interval: 1m
+  input_series:
+  - series: flux2_oom_total{job="flux2",instance="flux.example"}
+    values: 1+0x20
+  alert_rule_test:
+  - eval_time: 0m
+    alertname: Flux2OutOfMemory
+    exp_alerts:
+    - exp_labels:
+        job: flux2
+        instance: flux.example
+        severity: critical
+      exp_annotations:
+        summary: FLUX.2 encountered GPU out-of-memory on flux.example
+        description: An OOM occurred during model loading, warmup or generation. Inspect
+          GPU allocation and the failed operation before admitting more work; do not
+          enable quantization or offloading.
+  - eval_time: 15m
+    alertname: Flux2OutOfMemory
+    exp_alerts: []
+- name: Healthy zero OOM and other job OOM do not fire
+  interval: 1m
+  input_series:
+  - series: flux2_oom_total{job="flux2",instance="flux.example"}
+    values: 0+0x20
+  - series: flux2_oom_total{job="vllm",instance="flux.example"}
+    values: 0+1x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: Flux2OutOfMemory
+    exp_alerts: []
+- name: Missing OOM counter is a required exporter-contract failure
+  interval: 1m
+  input_series:
+  - series: up{job="flux2",instance="flux.example"}
+    values: 1+0x4
+  - series: flux2_model_ready{job="flux2",instance="flux.example"}
+    values: 1+0x4
+  - series: gpu_exporter_up{job="flux2",instance="flux.example"}
+    values: 1+0x4
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: Flux2RequiredMetricsMissing
+    exp_alerts:
+    - exp_labels:
+        job: flux2
+        instance: flux.example
+        severity: critical
+      exp_annotations:
+        summary: FLUX.2 required monitoring data is missing
+        description: The configured image scrape has no up series, or a reachable
+          exporter omitted model readiness, GPU collector health or the OOM counter.
+          Check the target and exporter contract.
