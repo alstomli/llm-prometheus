@@ -1,5 +1,50 @@
 # LLM Prometheus
 
+## FLUX.2 image inference
+
+The optional `flux2` scrape job is separate from the existing `vllm` job. Set
+`FLUX2_METRICS_TARGET` to the image Pod's port-8889 proxy hostname and
+`FLUX2_METRICS_TOKEN` to its dedicated metrics token (at least 32 characters,
+different from the chat relay token). Set both together; invalid or incomplete
+configuration fails startup before writing the scrape configuration. Credentials
+are kept in separate private runtime files and never included in YAML or logs.
+Existing chat targets, job labels, retention and the persistent volume are retained.
+
+The updated image bundles `rules/flux2-alerts.yml`. To use the reviewed startup
+script with the existing legacy Railway image, set the non-secret multiline
+`FLUX2_ALERT_RULES` variable to the **exact contents** of that file alongside
+`PROMETHEUS_STARTUP_SCRIPT`. The launcher writes it to a private runtime file and
+loads it through `rule_files`. Image monitoring fails startup if rules are missing.
+The rule-file override also works with the new image. Do not replace the existing
+Railway volume or publish any runtime credential files.
+
+Rules cover scrape failure (2 minutes), model unready (15-minute cold-start grace),
+GPU collector failure (2 minutes), queue age above 5 minutes for 5 minutes,
+3 worker errors/timeouts/interrupted jobs in 10 minutes, and output filesystem
+headroom below 10 GiB (warning) / 3 GiB (critical). Tune these thresholds after
+measuring the deployed model. Input errors and quota rejections are excluded
+from the worker-failure alert. Rules evaluate in Prometheus; outbound notifications
+require a separately configured Alertmanager and receiver.
+
+Deploy only after the image worker is healthy. Verify using
+`python scripts/check-deployment.py --expect-flux2` and the companion Grafana
+`scripts/check-flux2-deployment.py`, then check pending/firing rules through
+Prometheus's private `/api/v1/rules` API. For rollback, remove **both** FLUX.2
+connection variables and redeploy; retain `RUNPOD_METRICS_TARGETS`, chat credentials,
+the startup script and `/prometheus`. Existing time series remain available.
+
+Local/CI checks:
+
+```sh
+python scripts/test_start_prometheus.py
+promtool check rules rules/flux2-alerts.yml
+promtool test rules rules/flux2-alerts.test.yml
+```
+
+Set `PROMTOOL` to the binary path to additionally validate each successfully
+rendered runtime config. POSIX CI verifies credential-file permissions; Windows
+can exercise rendering with Git Bash but does not assert POSIX permission bits.
+
 Collects and stores inference and GPU metrics from the token-protected relay in
 [llm-inference-server](https://github.com/alstomli/llm-inference-server).
 [llm-grafana](https://github.com/alstomli/llm-grafana) queries these metrics.

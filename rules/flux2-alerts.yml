@@ -1,0 +1,59 @@
+groups:
+  - name: flux2
+    rules:
+      - alert: Flux2ScrapeDown
+        expr: up{job="flux2"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'FLUX.2 metrics scrape is down on {{ $labels.instance }}'
+          description: 'Check the Pod, metrics port, proxy and dedicated scrape credential.'
+      - alert: Flux2ModelNotReady
+        expr: (flux2_model_ready{job="flux2"} == 0) and on(instance) (up{job="flux2"} == 1)
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'FLUX.2 model remains unready on {{ $labels.instance }}'
+          description: 'Inspect loading, BF16/device validation and worker health. Do not enable offloading as a fallback.'
+      - alert: Flux2GpuCollectorDown
+        expr: (gpu_exporter_up{job="flux2"} == 0) and on(instance) (up{job="flux2"} == 1)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'FLUX.2 GPU collection failed on {{ $labels.instance }}'
+          description: 'Check nvidia-smi and GPU visibility; service reachability alone does not prove GPU health.'
+      - alert: Flux2QueueStalled
+        expr: flux2_oldest_queued_age_seconds{job="flux2"} > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'FLUX.2 queued work is delayed on {{ $labels.instance }}'
+          description: 'An accepted job has waited over five minutes for at least five minutes. Check the worker and queue.'
+      - alert: Flux2GenerationFailures
+        expr: sum by(job,instance) (increase(flux2_jobs_failed_total{job="flux2",reason=~"generation_error|timeout|interrupted"}[10m])) >= 3
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'FLUX.2 generation failures increased on {{ $labels.instance }}'
+          description: 'At least three worker errors, timeouts or interrupted jobs occurred in ten minutes.'
+      - alert: Flux2DiskLow
+        expr: flux2_disk_available_bytes{job="flux2"} < 10737418240
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'FLUX.2 output disk has less than 10 GiB available on {{ $labels.instance }}'
+          description: 'Check retention cleanup, job database and output filesystem capacity.'
+      - alert: Flux2DiskCritical
+        expr: flux2_disk_available_bytes{job="flux2"} < 3221225472
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'FLUX.2 output disk has less than 3 GiB available on {{ $labels.instance }}'
+          description: 'Restore disk headroom before accepting additional work.'

@@ -12,3 +12,8 @@ jobs:
       - run: |
           sh -n scripts/start-prometheus.sh
           python scripts/test_start_prometheus.py
+      - name: Validate rules and exercise alert timing with matching Prometheus
+        run: |
+          docker run --rm --entrypoint /bin/promtool -v "$PWD/rules:/rules:ro" prom/prometheus:v3.5.0 check rules /rules/flux2-alerts.yml
+          docker run --rm --entrypoint /bin/promtool -v "$PWD/rules:/rules:ro" prom/prometheus:v3.5.0 test rules /rules/flux2-alerts.test.yml
+          docker run --rm --entrypoint /bin/promtool -v "$PWD:/repo:ro" prom/prometheus:v3.5.0 check config --syntax-only /repo/prometheus.example.yml
