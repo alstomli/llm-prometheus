@@ -25,6 +25,21 @@ groups:
         annotations:
           summary: 'FLUX.2 GPU collection failed on {{ $labels.instance }}'
           description: 'Check nvidia-smi and GPU visibility; service reachability alone does not prove GPU health.'
+      - alert: Flux2RequiredMetricsMissing
+        expr: ((up{job="flux2"} == 1) unless on(job,instance) (flux2_model_ready{job="flux2"} and on(job,instance) gpu_exporter_up{job="flux2"} and on(job,instance) flux2_oom_total{job="flux2"})) or absent(up{job="flux2"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'FLUX.2 required monitoring data is missing'
+          description: 'The configured image scrape has no up series, or a reachable exporter omitted model readiness, GPU collector health or the OOM counter. Check the target and exporter contract.'
+      - alert: Flux2OutOfMemory
+        expr: (increase(flux2_oom_total{job="flux2"}[10m]) > 0) or ((flux2_oom_total{job="flux2"} > 0) unless on(job,instance) (flux2_oom_total{job="flux2"} offset 10m))
+        labels:
+          severity: critical
+        annotations:
+          summary: 'FLUX.2 encountered GPU out-of-memory on {{ $labels.instance }}'
+          description: 'An OOM occurred during model loading, warmup or generation. Inspect GPU allocation and the failed operation before admitting more work; do not enable quantization or offloading.'
       - alert: Flux2GenerationFailures
         expr: sum by(job,instance) (increase(flux2_jobs_failed_total{job="flux2",reason=~"generation_error|timeout|interrupted|oom"}[10m])) >= 3
         for: 1m
@@ -40,7 +55,7 @@ groups:
           severity: warning
         annotations:
           summary: 'FLUX.2 output disk has less than 10 GiB available on {{ $labels.instance }}'
-          description: 'Check retention cleanup, job database and output filesystem capacity.'
+          description: 'Check retention cleanup and output filesystem capacity.'
       - alert: Flux2DiskCritical
         expr: flux2_disk_available_bytes{job="flux2"} < 3221225472
         for: 1m

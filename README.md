@@ -19,12 +19,18 @@ The rule-file override also works with the new image. Do not replace the existin
 Railway volume or publish any runtime credential files.
 
 Rules cover scrape failure (2 minutes), model unready (15-minute cold-start grace),
-GPU collector failure (2 minutes),
+GPU collector failure (2 minutes), missing required exporter metrics (2 minutes),
+any OOM during load/warmup/generation (immediate, ten-minute event window),
 3 worker errors/OOMs/timeouts/interrupted jobs in 10 minutes, and output filesystem
 headroom below 10 GiB (warning) / 3 GiB (critical). Tune these thresholds after
 measuring the deployed model. There is no waiting queue; busy requests are rejected rather than stored.
 Input errors and quota rejections are excluded
-from the worker-failure alert. Rules evaluate in Prometheus; outbound notifications
+from the repeated worker-failure alert. A dedicated `flux2_oom_total` alert
+handles the first OOM, including an OOM observed before the first successful
+scrape; it clears after the ten-minute window with no new OOM. Required metrics
+include readiness, GPU collector health and the OOM counter. Missing-target
+detection is enabled only when the FLUX connection is configured, because the
+launcher loads no FLUX rules otherwise. Rules evaluate in Prometheus; outbound notifications
 require a separately configured Alertmanager and receiver.
 
 Deploy only after the image worker is healthy. Verify using

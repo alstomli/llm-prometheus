@@ -47,6 +47,7 @@ class StartupTests(unittest.TestCase):
         if os.name != 'nt':
             self.assertEqual(mode, 0o600)
         self.assertNotIn('job_name: flux2', config)
+        self.assertNotIn('rule_files:', config)
         self.assertNotIn('x' * 64, config + result.stdout + result.stderr)
 
     def test_multiple_targets_override_legacy_and_keep_credentials_private(self):
