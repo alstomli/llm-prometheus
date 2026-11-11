@@ -19,10 +19,11 @@ The rule-file override also works with the new image. Do not replace the existin
 Railway volume or publish any runtime credential files.
 
 Rules cover scrape failure (2 minutes), model unready (15-minute cold-start grace),
-GPU collector failure (2 minutes), queue age above 5 minutes for 5 minutes,
-3 worker errors/timeouts/interrupted jobs in 10 minutes, and output filesystem
+GPU collector failure (2 minutes),
+3 worker errors/OOMs/timeouts/interrupted jobs in 10 minutes, and output filesystem
 headroom below 10 GiB (warning) / 3 GiB (critical). Tune these thresholds after
-measuring the deployed model. Input errors and quota rejections are excluded
+measuring the deployed model. There is no waiting queue; busy requests are rejected rather than stored.
+Input errors and quota rejections are excluded
 from the worker-failure alert. Rules evaluate in Prometheus; outbound notifications
 require a separately configured Alertmanager and receiver.
 

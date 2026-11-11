@@ -25,22 +25,14 @@ groups:
         annotations:
           summary: 'FLUX.2 GPU collection failed on {{ $labels.instance }}'
           description: 'Check nvidia-smi and GPU visibility; service reachability alone does not prove GPU health.'
-      - alert: Flux2QueueStalled
-        expr: flux2_oldest_queued_age_seconds{job="flux2"} > 300
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: 'FLUX.2 queued work is delayed on {{ $labels.instance }}'
-          description: 'An accepted job has waited over five minutes for at least five minutes. Check the worker and queue.'
       - alert: Flux2GenerationFailures
-        expr: sum by(job,instance) (increase(flux2_jobs_failed_total{job="flux2",reason=~"generation_error|timeout|interrupted"}[10m])) >= 3
+        expr: sum by(job,instance) (increase(flux2_jobs_failed_total{job="flux2",reason=~"generation_error|timeout|interrupted|oom"}[10m])) >= 3
         for: 1m
         labels:
           severity: warning
         annotations:
           summary: 'FLUX.2 generation failures increased on {{ $labels.instance }}'
-          description: 'At least three worker errors, timeouts or interrupted jobs occurred in ten minutes.'
+          description: 'At least three worker errors, OOMs, timeouts or interrupted jobs occurred in ten minutes.'
       - alert: Flux2DiskLow
         expr: flux2_disk_available_bytes{job="flux2"} < 10737418240
         for: 5m

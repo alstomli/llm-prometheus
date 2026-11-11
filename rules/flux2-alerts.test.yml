@@ -83,26 +83,6 @@ tests:
         summary: FLUX.2 GPU collection failed on flux.example
         description: Check nvidia-smi and GPU visibility; service reachability alone
           does not prove GPU health.
-- name: Queue needs sustained delay
-  interval: 1m
-  input_series:
-  - series: flux2_oldest_queued_age_seconds{job="flux2",instance="flux.example"}
-    values: 301+0x10
-  alert_rule_test:
-  - eval_time: 4m
-    alertname: Flux2QueueStalled
-    exp_alerts: []
-  - eval_time: 5m
-    alertname: Flux2QueueStalled
-    exp_alerts:
-    - exp_labels:
-        instance: flux.example
-        job: flux2
-        severity: warning
-      exp_annotations:
-        summary: FLUX.2 queued work is delayed on flux.example
-        description: An accepted job has waited over five minutes for at least five
-          minutes. Check the worker and queue.
 - name: Both disk thresholds have separate hold times
   interval: 1m
   input_series:
@@ -153,8 +133,8 @@ tests:
         job: flux2
       exp_annotations:
         summary: FLUX.2 generation failures increased on flux.example
-        description: At least three worker errors, timeouts or interrupted jobs occurred
-          in ten minutes.
+        description: At least three worker errors, OOMs, timeouts or interrupted jobs
+          occurred in ten minutes.
 - name: Healthy service and normal user errors stay quiet
   interval: 1m
   input_series:
@@ -164,8 +144,6 @@ tests:
     values: 1+0x20
   - series: gpu_exporter_up{job="flux2",instance="flux.example"}
     values: 1+0x20
-  - series: flux2_oldest_queued_age_seconds{job="flux2",instance="flux.example"}
-    values: 300+0x20
   - series: flux2_disk_available_bytes{job="flux2",instance="flux.example"}
     values: 21474836480+0x20
   - series: flux2_jobs_failed_total{job="flux2",instance="flux.example",reason="prompt_too_long"}
@@ -179,9 +157,6 @@ tests:
     exp_alerts: []
   - eval_time: 20m
     alertname: Flux2GpuCollectorDown
-    exp_alerts: []
-  - eval_time: 20m
-    alertname: Flux2QueueStalled
     exp_alerts: []
   - eval_time: 20m
     alertname: Flux2GenerationFailures
