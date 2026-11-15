@@ -70,8 +70,8 @@ Collects and stores inference and GPU metrics from the token-protected relay in
   actual configuration at startup rather than loading this example.
 - `scripts/check-deployment.py`: validates a locally reachable Prometheus endpoint.
 
-Keep the Runpod model API private. The relay on port 8888 permits only protected
-metrics access. Set `RUNPOD_METRICS_TARGET` to the new port-8888 hostname after a
+Keep the Runpod model API private. The BF16 relay on port 8889 permits only protected
+metrics access. Set both chat target variables to the new port-8889 hostname after a
 Pod migration; retain the matching token on the Pod's persistent volume.
 
 ## Build
@@ -89,9 +89,10 @@ the running service or its persistent metrics history.
 ## Railway
 
 - Service name `prometheus`, `PORT=9090`, persistent volume `/prometheus`.
-- `RUNPOD_METRICS_TARGET=rp93m3noz3l9lt-8888.proxy.runpod.net` (hostname only).
-- Current two-Pod override:
-  `RUNPOD_METRICS_TARGETS=rp93m3noz3l9lt-8888.proxy.runpod.net,o6f2qoctk798tq-8889.proxy.runpod.net`.
+- Current single BF16 target (hostname only):
+  `RUNPOD_METRICS_TARGET=zwwucot0v5wy0b-8889.proxy.runpod.net`.
+- Keep the overriding variable aligned:
+  `RUNPOD_METRICS_TARGETS=zwwucot0v5wy0b-8889.proxy.runpod.net`.
 - `RUNPOD_METRICS_TOKEN` must match the Pod's `/workspace/monitoring/metrics-token`.
 - Defaults: `METRICS_RETENTION_TIME=7d`, `METRICS_RETENTION_SIZE=512MB`.
   The size limit covers TSDB blocks; WAL and head data also consume volume space.
@@ -103,6 +104,27 @@ the running service or its persistent metrics history.
 
 Cloud end-to-end verification lives in the Grafana repository:
 `python ../llm-grafana/scripts/check-deployment.py`. Keep Prometheus private.
+
+### Current BF16 migration on November 15, 2026
+
+The current chat deployment uses only `zwwucot0v5wy0b`. Both chat target
+variables above replace the prior BF16 target `66j3wfha6suokg`; the retired
+4bit target is no longer scraped. Preserve the relay token, startup script,
+image, retention, private networking and `/prometheus` volume when redeploying.
+The separate FLUX.2 job and credentials are independent of this migration.
+
+Verify chat monitoring through the Grafana repository:
+
+```sh
+python ../llm-grafana/scripts/check-deployment.py \
+  --expected-instance zwwucot0v5wy0b-8889.proxy.runpod.net
+```
+
+Require `up{job="vllm"}` and `gpu_exporter_up` to equal 1 for the new instance.
+Historical samples retain old labels; the Grafana Pod variable is restricted to
+the current BF16 target. For rollback, first verify the retained old Pod, update
+both chat target variables together, then redeploy while preserving the volume.
+The dated rollout sections below are historical receipts, not current settings.
 
 ### Multi-Pod rollout on November 2, 2026
 
