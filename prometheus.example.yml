@@ -12,7 +12,7 @@ scrape_configs:
     static_configs:
       - targets:
           - "66j3wfha6suokg-8889.proxy.runpod.net"
-          - "kdm8qghqezo72e-8889.proxy.runpod.net"
+          - "8l7n75h7m4tma8-8889.proxy.runpod.net"
   # Optional image backend; uses a separate bearer credential file.
   - job_name: flux2
     scheme: https
