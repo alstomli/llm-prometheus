@@ -70,9 +70,9 @@ Collects and stores inference and GPU metrics from the token-protected relay in
   actual configuration at startup rather than loading this example.
 - `scripts/check-deployment.py`: validates a locally reachable Prometheus endpoint.
 
-Keep the Runpod model API private. The relay on port 8888 permits only protected
-metrics access. Set `RUNPOD_METRICS_TARGET` to the new port-8888 hostname after a
-Pod migration; retain the matching token on the Pod's persistent volume.
+Keep the Runpod model API private. The relay on port 8889 permits only protected
+metrics access. After a Pod migration, replace that Pod's port-8889 hostname in
+`RUNPOD_METRICS_TARGETS`; retain the matching token on the Pod's persistent volume.
 
 ## Build
 
@@ -89,10 +89,13 @@ the running service or its persistent metrics history.
 ## Railway
 
 - Service name `prometheus`, `PORT=9090`, persistent volume `/prometheus`.
-- `RUNPOD_METRICS_TARGET=rp93m3noz3l9lt-8888.proxy.runpod.net` (hostname only).
-- Current two-Pod override:
-  `RUNPOD_METRICS_TARGETS=rp93m3noz3l9lt-8888.proxy.runpod.net,o6f2qoctk798tq-8889.proxy.runpod.net`.
-- `RUNPOD_METRICS_TOKEN` must match the Pod's `/workspace/monitoring/metrics-token`.
+- Current Pods, hostnames only, in the existing `vllm` job:
+  `RUNPOD_METRICS_TARGETS=66j3wfha6suokg-8889.proxy.runpod.net,kdm8qghqezo72e-8889.proxy.runpod.net`
+  (`bf16` Pod `66j3wfha6suokg`, RTX PRO 6000; `4bit` Pod `kdm8qghqezo72e`, RTX PRO 4500).
+  It overrides the single-target fallback `RUNPOD_METRICS_TARGET`, which names the BF16 Pod.
+- `RUNPOD_METRICS_TOKEN` must match each Pod's `/workspace/monitoring/metrics-token`;
+  both Pods use the same token. A Pod whose relay is not running (stopped Pod or
+  `METRICS_ENABLED` off) shows as down without affecting the other target.
 - Defaults: `METRICS_RETENTION_TIME=7d`, `METRICS_RETENTION_SIZE=512MB`.
   The size limit covers TSDB blocks; WAL and head data also consume volume space.
 - Preserve the existing `RAILWAY_RUN_UID=0` if required for volume permissions.
@@ -135,23 +138,22 @@ image returns to its original single-target behavior. Keep `/prometheus` attache
 to retain history. After a future image release includes the new launcher,
 `RUNPOD_METRICS_TARGETS` can also be reduced to the original target for rollback.
 
-### BF16 hardware migration on November 3, 2026
+### Pod migrations
 
-The BF16 scrape target moves from `ftntkktzid9f4p-8889.proxy.runpod.net` to
-`o6f2qoctk798tq-8889.proxy.runpod.net` for the RTX PRO 6000 deployment. Change only
+When a profile moves to a new Pod, replace only that Pod's hostname in
 `RUNPOD_METRICS_TARGETS` on the existing Railway Prometheus service and redeploy.
-The 4bit target stays `rp93m3noz3l9lt-8888.proxy.runpod.net`. Keep the bearer
-token, startup script, image, resource/retention settings and `/prometheus` volume.
+Keep the bearer token, startup script, image, resource/retention settings and
+`/prometheus` volume.
 
-The new hostname produces a new `instance` label, while previously stored BF16
+The new hostname produces a new `instance` label, while previously stored
 series retain the old hostname. The existing Grafana Pod query variable discovers
 the new target and all existing panels can use it. Historical Pod options can
 remain visible for time ranges containing old samples. Verify both current
-targets and both `gpu_exporter_up` series equal 1. Stop the old BF16 Pod only
+targets and both `gpu_exporter_up` series equal 1. Stop the old Pod only
 after the new application connection and monitoring pass verification.
 
-For migration rollback, first start and verify the retained old BF16 Pod, replace
-only the BF16 hostname in `RUNPOD_METRICS_TARGETS`, and redeploy Prometheus without
+For migration rollback, first start and verify the retained old Pod, replace
+only its hostname in `RUNPOD_METRICS_TARGETS`, and redeploy Prometheus without
 replacing its persistent volume. Coordinate frontend routing and the GitHub BF16
 deployment target with the backend migration guide.
 

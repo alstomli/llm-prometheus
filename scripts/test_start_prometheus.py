@@ -63,6 +63,28 @@ class StartupTests(unittest.TestCase):
             self.assertEqual(mode, 0o600)
         self.assertNotIn('x' * 64, config + result.stdout + result.stderr)
 
+    def test_current_bf16_and_4bit_relays_share_the_vllm_job(self):
+        bf16 = '66j3wfha6suokg-8889.proxy.runpod.net'
+        four_bit = 'kdm8qghqezo72e-8889.proxy.runpod.net'
+        result, config, _ = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64,
+                                         'RUNPOD_METRICS_TARGET': bf16,
+                                         'RUNPOD_METRICS_TARGETS': f'{bf16},{four_bit}'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(config.count('job_name:'), 1)
+        self.assertIn('job_name: vllm', config)
+        self.assertIn('scheme: https', config)
+        self.assertEqual(re.findall(r'- "([^"]+)"', config), [bf16, four_bit])
+        self.assertNotIn('x' * 64, config + result.stdout + result.stderr)
+
+    def test_examples_list_only_current_pods(self):
+        root = Path(__file__).parent.parent
+        current = {'66j3wfha6suokg', 'kdm8qghqezo72e'}
+        for name in ('prometheus.example.yml', '.env.example', 'README.md'):
+            with self.subTest(file=name):
+                text = (root / name).read_text()
+                pods = set(re.findall(r'\b([a-z0-9]{14})-888[89]\.proxy\.runpod\.net', text))
+                self.assertEqual(pods, current)
+
     def test_invalid_targets_fail_before_generating_config(self):
         for targets in ['', 'https://host.example/metrics', 'a.example,,b.example', 'a.example,',
                         'a.example, b.example', 'a.example;echo unsafe']:
