@@ -4,15 +4,15 @@ set -f
 : "${RUNPOD_METRICS_TOKEN:?Set the private metrics token in Railway variables}"
 four_bit_pod="${RUNPOD_4BIT_POD_ID:-}"
 bf16_pod="${RUNPOD_BF16_POD_ID:-}"
-require_pod_id() {
+check_pod_id() {
   case "$2" in
     *[!a-z0-9]*)
       echo "Set $1 to a bare Pod ID, without a hostname, scheme or port." >&2
       exit 1 ;;
   esac
 }
-require_pod_id RUNPOD_4BIT_POD_ID "$four_bit_pod"
-require_pod_id RUNPOD_BF16_POD_ID "$bf16_pod"
+check_pod_id RUNPOD_4BIT_POD_ID "$four_bit_pod"
+check_pod_id RUNPOD_BF16_POD_ID "$bf16_pod"
 targets=
 if [ -z "$four_bit_pod$bf16_pod" ]; then
   targets="${RUNPOD_METRICS_TARGETS:-${RUNPOD_METRICS_TARGET:-}}"

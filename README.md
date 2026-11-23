@@ -142,7 +142,8 @@ For rollback with the current legacy image, clear the custom start command and
 redeploy. The original `RUNPOD_METRICS_TARGET` and token remain configured, so the
 image returns to its original single-target behavior. Keep `/prometheus` attached
 to retain history. After a future image release includes the new launcher,
-`RUNPOD_METRICS_TARGETS` can also be reduced to the original target for rollback.
+`RUNPOD_METRICS_TARGETS` can also be reduced to the original target for rollback,
+with both Pod ID variables removed. The legacy launcher ignores the Pod IDs.
 
 ### Pod migrations
 
@@ -152,6 +153,8 @@ service and redeploy. Keep the bearer token, startup script, image,
 resource/retention settings and `/prometheus` volume. No change in this repository
 is needed.
 
+The running service uses the Pod IDs only after `PROMETHEUS_STARTUP_SCRIPT` holds
+this version of `scripts/start-prometheus.sh`; merging a PR does not update it.
 While the service still uses the old variables, replace that Pod's hostname in
 `RUNPOD_METRICS_TARGETS` instead. Setting only one Pod ID stops scraping every
 Pod that only the old variables name.
@@ -172,6 +175,7 @@ backend migration guide.
 
 Create the shared network once with `docker network create llm-monitoring`
 (skip if it exists). Copy `.env.example` to `.env`, set the matching metrics token,
+replace both placeholder Pod IDs (or empty the one you do not scrape),
 and run `docker compose up -d --build`. The endpoint binds only to
 http://127.0.0.1:9090. Run `python scripts/check-deployment.py` to validate it.
 
