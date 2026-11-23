@@ -37,7 +37,7 @@ Deploy only after the image worker is healthy. Verify using
 `python scripts/check-deployment.py --expect-flux2` and the companion Grafana
 `scripts/check-flux2-deployment.py`, then check pending/firing rules through
 Prometheus's private `/api/v1/rules` API. For rollback, remove **both** FLUX.2
-connection variables and redeploy; retain the chat target variables, chat credentials,
+connection variables and redeploy; retain the Pod ID variables, chat credentials,
 the startup script and `/prometheus`. Existing time series remain available.
 
 Local/CI checks:
@@ -65,12 +65,9 @@ Collects and stores inference and GPU metrics from the token-protected relay in
 - `RUNPOD_4BIT_POD_ID` and `RUNPOD_BF16_POD_ID` each take a bare Pod ID. Each
   non-empty ID adds `<pod>-8889.proxy.runpod.net` to the `vllm` job with a `profile`
   label of `4bit` or `bf16`; an empty or unset ID skips that profile. A malformed
-  ID, or no target at all, fails startup before any configuration is written.
-- `RUNPOD_METRICS_TARGETS` (comma-separated hostnames) and the single
-  `RUNPOD_METRICS_TARGET` it overrides are the old variables. They are used, without
-  a `profile` label, only when both Pod IDs are empty or unset.
-- `scripts/test_start_prometheus.py` checks Pod ID, legacy and multiple target
-  rendering, invalid values, and credential-file privacy on a POSIX system.
+  ID, or no Pod ID at all, fails startup before any configuration is written.
+- `scripts/test_start_prometheus.py` checks Pod ID rendering, invalid values, and
+  credential-file privacy on a POSIX system.
 - `prometheus.example.yml`: reference configuration; the image generates its
   actual configuration at startup rather than loading this example.
 - `scripts/check-deployment.py`: validates a locally reachable Prometheus endpoint.
@@ -96,8 +93,8 @@ the running service or its persistent metrics history.
 - Service name `prometheus`, `PORT=9090`, persistent volume `/prometheus`.
 - One bare Pod ID per profile, for example `RUNPOD_4BIT_POD_ID=<4bit-pod-id>` and
   `RUNPOD_BF16_POD_ID=<bf16-pod-id>`. Both targets are in the existing `vllm` job.
-  If either is set, the old target variables are ignored. Remove both Pod IDs to
-  return to the old variables. Each profile's current Pod is recorded only in the
+  Keep both set: a profile without a Pod ID is not scraped, and with neither set
+  Prometheus does not start. Each profile's current Pod is recorded only in the
   current-runtime records of `llm-inference-server`.
 - `RUNPOD_METRICS_TOKEN` must match each Pod's `/workspace/monitoring/metrics-token`;
   both Pods use the same token. A Pod whose relay is not running (stopped Pod or
@@ -113,37 +110,24 @@ the running service or its persistent metrics history.
 Cloud end-to-end verification lives in the Grafana repository:
 `python ../llm-grafana/scripts/check-deployment.py`. Keep Prometheus private.
 
-### Multi-Pod rollout on November 2, 2026
+### Startup script
 
-The existing Railway service and `prometheus-volume` at `/prometheus` are reused.
-The original Pod stays in the `vllm` job and the BF16 Pod is added. Each target
-keeps its default hostname `instance` label; existing series are not relabeled.
-
-The running image remains `zihan000/qwen-inference:prometheus-0.1.1`. To apply the
-updated startup code without publishing a new image, the exact contents of
-`scripts/start-prometheus.sh` are supplied as the non-secret service variable
-`PROMETHEUS_STARTUP_SCRIPT`, with this custom start command:
+The running image remains `zihan000/qwen-inference:prometheus-0.1.1`. Its startup
+code is the exact contents of `scripts/start-prometheus.sh`, supplied as the
+non-secret service variable `PROMETHEUS_STARTUP_SCRIPT` with this custom start
+command:
 
 ```sh
 /bin/sh -c 'printf "%s" "$PROMETHEUS_STARTUP_SCRIPT" > /tmp/start-prometheus.sh && exec /bin/sh /tmp/start-prometheus.sh'
 ```
 
-`RUNPOD_METRICS_TARGETS` and that script are the only added variables. The existing
-private `RUNPOD_METRICS_TOKEN`, single-target fallback, retention, resource limits,
-health path, networking, and data volume are preserved. The service is redeployed
-to activate the new startup configuration. The token remains in its private
-runtime credentials file rather than being embedded in YAML or source.
+Merging a PR does not update the running service: set the variable to the merged
+script and redeploy. The token stays in its private runtime credentials file rather
+than being embedded in YAML or source. Do not clear the custom start command: the
+image's built-in launcher does not read the Pod IDs.
 
-The new target can be down temporarily while BF16 reloads. Verify both targets
-through Grafana's private Prometheus proxy and require both `up` and
-`gpu_exporter_up` to equal 1 for each instance.
-
-For rollback with the current legacy image, clear the custom start command and
-redeploy. The original `RUNPOD_METRICS_TARGET` and token remain configured, so the
-image returns to its original single-target behavior. Keep `/prometheus` attached
-to retain history. After a future image release includes the new launcher,
-`RUNPOD_METRICS_TARGETS` can also be reduced to the original target for rollback,
-with both Pod ID variables removed. The legacy launcher ignores the Pod IDs.
+To undo a script change, set `PROMETHEUS_STARTUP_SCRIPT` to an earlier version from
+Git that reads the Pod IDs, and redeploy. Keep `/prometheus` attached to retain history.
 
 ### Pod migrations
 
@@ -152,12 +136,6 @@ When a profile moves to a new Pod, replace only that profile's
 service and redeploy. Keep the bearer token, startup script, image,
 resource/retention settings and `/prometheus` volume. No change in this repository
 is needed.
-
-The running service uses the Pod IDs only after `PROMETHEUS_STARTUP_SCRIPT` holds
-this version of `scripts/start-prometheus.sh`; merging a PR does not update it.
-While the service still uses the old variables, replace that Pod's hostname in
-`RUNPOD_METRICS_TARGETS` instead. Setting only one Pod ID stops scraping every
-Pod that only the old variables name.
 
 The new Pod produces a new `instance` label with the same `profile` label, while
 previously stored series retain the old hostname. The existing Grafana Pod query

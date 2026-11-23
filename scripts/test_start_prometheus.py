@@ -21,7 +21,7 @@ class StartupTests(unittest.TestCase):
             source = Path(__file__).with_name('start-prometheus.sh').read_text()
             source = source.replace('/tmp/', root.as_posix() + '/').replace('/bin/prometheus', stub.as_posix())
             env = {key: value for key, value in os.environ.items()
-                   if key not in ('RUNPOD_METRICS_TOKEN', 'RUNPOD_METRICS_TARGET', 'RUNPOD_METRICS_TARGETS',
+                   if key not in ('RUNPOD_METRICS_TOKEN',
                                   'RUNPOD_4BIT_POD_ID', 'RUNPOD_BF16_POD_ID',
                                   'FLUX2_METRICS_TARGET', 'FLUX2_METRICS_TOKEN', 'FLUX2_ALERT_RULES')}
             env.update(variables)
@@ -40,37 +40,17 @@ class StartupTests(unittest.TestCase):
                 self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
             return result, config, mode
 
-    def test_legacy_single_target(self):
-        result, config, mode = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64,
-                                           'RUNPOD_METRICS_TARGET': 'old-8888.proxy.runpod.net'})
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(re.findall(r'- "([^"]+)"', config), ['old-8888.proxy.runpod.net'])
-        if os.name != 'nt':
-            self.assertEqual(mode, 0o600)
-        self.assertNotIn('job_name: flux2', config)
-        self.assertNotIn('rule_files:', config)
-        self.assertNotIn('x' * 64, config + result.stdout + result.stderr)
-
-    def test_multiple_targets_override_legacy_and_keep_credentials_private(self):
-        result, config, mode = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64,
-            'RUNPOD_METRICS_TARGET': 'ignored.example',
-            'RUNPOD_METRICS_TARGETS': 'old-8888.proxy.runpod.net,new-8889.proxy.runpod.net'})
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(re.findall(r'- "([^"]+)"', config),
-                         ['old-8888.proxy.runpod.net', 'new-8889.proxy.runpod.net'])
-        self.assertIn('job_name: vllm', config)
-        self.assertIn('scrape_timeout: 12s', config)
-        if os.name != 'nt':
-            self.assertEqual(mode, 0o600)
-        self.assertNotIn('x' * 64, config + result.stdout + result.stderr)
-
     def test_pod_ids_give_one_labelled_target_per_profile_in_the_vllm_job(self):
-        result, config, _ = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64,
-                                         'RUNPOD_4BIT_POD_ID': 'fourbitpod1', 'RUNPOD_BF16_POD_ID': 'bf16pod2'})
+        result, config, mode = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64,
+                                            'RUNPOD_4BIT_POD_ID': 'fourbitpod1', 'RUNPOD_BF16_POD_ID': 'bf16pod2'})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(config.count('job_name:'), 1)
         self.assertIn('job_name: vllm', config)
         self.assertIn('scheme: https', config)
+        self.assertIn('scrape_timeout: 12s', config)
+        self.assertNotIn('rule_files:', config)
+        if os.name != 'nt':
+            self.assertEqual(mode, 0o600)
         self.assertEqual(config.split('static_configs:\n')[1],
                          '      - targets:\n'
                          '          - "fourbitpod1-8889.proxy.runpod.net"\n'
@@ -104,7 +84,7 @@ class StartupTests(unittest.TestCase):
                             ('RUNPOD_BF16_POD_ID', 'RUNPOD_4BIT_POD_ID')):
             for pod in ['pod1-8889.proxy.runpod.net', 'https://pod1', 'pod1-8889', 'pod1,pod2', 'POD1',
                         ' ', ' pod1', 'pod1\n', 'pod1\n  evil: true', 'pod1"', 'pod1;echo unsafe', '*']:
-                for extra in ({}, {other: 'goodpod1'}, {'RUNPOD_METRICS_TARGETS': 'old.example'}):
+                for extra in ({}, {other: 'goodpod1'}):
                     with self.subTest(name=name, pod=pod, extra=extra):
                         result, config, mode = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64, name: pod, **extra})
                         self.assertNotEqual(result.returncode, 0)
@@ -113,9 +93,8 @@ class StartupTests(unittest.TestCase):
                         self.assertIn(name, result.stderr)
                         self.assertNotIn('x' * 64, result.stdout + result.stderr)
 
-    def test_no_target_from_either_source_fails_before_generating_config(self):
-        empty = {name: '' for name in ('RUNPOD_4BIT_POD_ID', 'RUNPOD_BF16_POD_ID',
-                                       'RUNPOD_METRICS_TARGETS', 'RUNPOD_METRICS_TARGET')}
+    def test_no_pod_id_fails_before_generating_config(self):
+        empty = {'RUNPOD_4BIT_POD_ID': '', 'RUNPOD_BF16_POD_ID': ''}
         for variables in ({}, empty):
             with self.subTest(variables=variables):
                 result, config, mode = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64, **variables})
@@ -124,48 +103,6 @@ class StartupTests(unittest.TestCase):
                 self.assertIsNone(mode)
                 self.assertIn('RUNPOD_4BIT_POD_ID', result.stderr)
                 self.assertNotIn('x' * 64, result.stdout + result.stderr)
-
-    def test_any_pod_id_overrides_the_old_target_variables(self):
-        for name in ('RUNPOD_4BIT_POD_ID', 'RUNPOD_BF16_POD_ID'):
-            # The old list is ignored even when it would not be accepted by itself.
-            for old in ('old.example', 'https://old.example/metrics'):
-                with self.subTest(name=name, old=old):
-                    result, config, _ = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64, name: 'newpod1',
-                                                     'RUNPOD_METRICS_TARGET': old, 'RUNPOD_METRICS_TARGETS': old})
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(re.findall(r'- "([^"]+)"', config), ['newpod1-8889.proxy.runpod.net'])
-
-    def test_empty_pod_ids_fall_back_to_old_targets_without_a_profile_label(self):
-        for old in ('RUNPOD_METRICS_TARGET', 'RUNPOD_METRICS_TARGETS'):
-            with self.subTest(old=old):
-                result, config, _ = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64, old: 'old-8889.proxy.runpod.net',
-                                                 'RUNPOD_4BIT_POD_ID': '', 'RUNPOD_BF16_POD_ID': ''})
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(re.findall(r'- "([^"]+)"', config), ['old-8889.proxy.runpod.net'])
-                self.assertNotIn('profile', config)
-                self.assertNotIn('labels', config)
-
-    def test_flux_job_is_the_same_with_pod_ids_as_with_old_targets(self):
-        flux = {'RUNPOD_METRICS_TOKEN': 'chat-secret-' + 'x' * 40,
-                'FLUX2_METRICS_TARGET': 'images-8889.proxy.runpod.net',
-                'FLUX2_METRICS_TOKEN': 'image-secret-' + 'y' * 40,
-                'FLUX2_ALERT_RULES': Path(__file__).parent.parent.joinpath('rules/flux2-alerts.yml').read_text()}
-        result, config, _ = self.render({**flux, 'RUNPOD_4BIT_POD_ID': 'fourbitpod1', 'RUNPOD_BF16_POD_ID': 'bf16pod2'})
-        self.assertEqual(result.returncode, 0, result.stderr)
-        _, old_config, _ = self.render({**flux, 'RUNPOD_METRICS_TARGET': 'old.example'})
-        chat, job = config.split('  - job_name: flux2')
-        old_job = old_config.split('  - job_name: flux2')[1]
-
-        def without_directory(text):
-            # Each render writes to its own temporary directory.
-            return re.sub(r'credentials_file: .*/', 'credentials_file: ', text)
-        self.assertEqual(without_directory(job), without_directory(old_job))
-        self.assertIn('- "images-8889.proxy.runpod.net"', job)
-        self.assertNotIn('profile', job)
-        self.assertEqual(chat.count('profile:'), 2)
-        self.assertIn('rule_files:', chat)
-        for secret in (flux['RUNPOD_METRICS_TOKEN'], flux['FLUX2_METRICS_TOKEN']):
-            self.assertNotIn(secret, config + result.stdout + result.stderr)
 
     def test_examples_and_tests_name_no_real_pod(self):
         root = Path(__file__).parent.parent
@@ -177,25 +114,17 @@ class StartupTests(unittest.TestCase):
                 text = (root / name).read_text(encoding='utf-8')
                 self.assertEqual(pod_id.findall(text), [])
 
-    def test_invalid_targets_fail_before_generating_config(self):
-        for targets in ['', 'https://host.example/metrics', 'a.example,,b.example', 'a.example,',
-                        'a.example, b.example', 'a.example;echo unsafe']:
-            with self.subTest(targets=targets):
-                result, config, _ = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64,
-                                                 'RUNPOD_METRICS_TARGETS': targets})
-                self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(config, '')
-
-    def test_flux_job_keeps_existing_targets_and_separates_credentials(self):
+    def test_flux_job_keeps_pod_targets_and_separates_credentials(self):
         variables = {'RUNPOD_METRICS_TOKEN': 'chat-secret-' + 'x' * 40,
-                     'RUNPOD_METRICS_TARGETS': 'chat-a.example,chat-b.example',
+                     'RUNPOD_4BIT_POD_ID': 'fourbitpod1', 'RUNPOD_BF16_POD_ID': 'bf16pod2',
                      'FLUX2_METRICS_TARGET': 'images-8889.proxy.runpod.net',
                      'FLUX2_METRICS_TOKEN': 'image-secret-' + 'y' * 40,
                      'FLUX2_ALERT_RULES': Path(__file__).parent.parent.joinpath('rules/flux2-alerts.yml').read_text()}
         result, config, _ = self.render(variables)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(re.findall(r'- "([^"]+)"', config),
-                         ['chat-a.example', 'chat-b.example', 'images-8889.proxy.runpod.net'])
+                         ['fourbitpod1-8889.proxy.runpod.net', 'bf16pod2-8889.proxy.runpod.net',
+                          'images-8889.proxy.runpod.net'])
         self.assertEqual(config.count('job_name: vllm'), 1)
         self.assertEqual(config.count('job_name: flux2'), 1)
         chat, flux = config.split('  - job_name: flux2')
@@ -203,11 +132,14 @@ class StartupTests(unittest.TestCase):
         self.assertNotIn('/flux2-metrics-token', chat)
         self.assertIn('/flux2-metrics-token', flux)
         self.assertIn('/flux2-alerts.yml', config)
+        self.assertEqual(chat.count('profile:'), 2)
+        self.assertNotIn('profile', flux)
+        self.assertIn('rule_files:', chat)
         for secret in (variables['RUNPOD_METRICS_TOKEN'], variables['FLUX2_METRICS_TOKEN']):
             self.assertNotIn(secret, config + result.stdout + result.stderr)
 
     def test_partial_invalid_or_reused_flux_credentials_fail_closed(self):
-        base = {'RUNPOD_METRICS_TOKEN': 'x' * 64, 'RUNPOD_METRICS_TARGET': 'chat.example'}
+        base = {'RUNPOD_METRICS_TOKEN': 'x' * 64, 'RUNPOD_4BIT_POD_ID': 'fourbitpod1'}
         invalid = [
             {'FLUX2_METRICS_TARGET': 'flux.example'},
             {'FLUX2_METRICS_TOKEN': 'y' * 64},
