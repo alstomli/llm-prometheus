@@ -1,6 +1,5 @@
 #!/bin/sh
 set -eu
-set -f
 : "${RUNPOD_METRICS_TOKEN:?Set the private metrics token in Railway variables}"
 four_bit_pod="${RUNPOD_4BIT_POD_ID:-}"
 bf16_pod="${RUNPOD_BF16_POD_ID:-}"
@@ -13,14 +12,9 @@ check_pod_id() {
 }
 check_pod_id RUNPOD_4BIT_POD_ID "$four_bit_pod"
 check_pod_id RUNPOD_BF16_POD_ID "$bf16_pod"
-targets=
 if [ -z "$four_bit_pod$bf16_pod" ]; then
-  targets="${RUNPOD_METRICS_TARGETS:-${RUNPOD_METRICS_TARGET:-}}"
-  case "$targets" in
-    ''|,*|*,|*,,*|*[!a-zA-Z0-9.,-]*)
-      echo 'Set RUNPOD_4BIT_POD_ID or RUNPOD_BF16_POD_ID to a Pod ID, or set metrics target hostnames as a comma-separated list, without schemes or paths.' >&2
-      exit 1 ;;
-  esac
+  echo 'Set RUNPOD_4BIT_POD_ID or RUNPOD_BF16_POD_ID to a Pod ID.' >&2
+  exit 1
 fi
 # Image inference uses its own credential; do not grant it the chat relay token.
 flux_target="${FLUX2_METRICS_TARGET:-}"
@@ -36,9 +30,6 @@ if [ -n "$flux_target" ] || [ -n "$flux_token" ]; then
     exit 1
   fi
 fi
-IFS=,
-set -- $targets
-unset IFS
 umask 077
 printf '%s' "$RUNPOD_METRICS_TOKEN" > /tmp/metrics-token
 if [ -n "$flux_target" ]; then
@@ -72,12 +63,6 @@ scrape_configs:
       credentials_file: /tmp/metrics-token
     static_configs:
 EOF
-if [ -n "$targets" ]; then
-  printf '      - targets:\n' >> /tmp/prometheus.yml
-  for target do
-    printf '          - "%s"\n' "$target" >> /tmp/prometheus.yml
-  done
-fi
 write_profile_target() {
   [ -n "$2" ] || return 0
   cat >> /tmp/prometheus.yml <<EOF
