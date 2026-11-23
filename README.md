@@ -37,7 +37,7 @@ Deploy only after the image worker is healthy. Verify using
 `python scripts/check-deployment.py --expect-flux2` and the companion Grafana
 `scripts/check-flux2-deployment.py`, then check pending/firing rules through
 Prometheus's private `/api/v1/rules` API. For rollback, remove **both** FLUX.2
-connection variables and redeploy; retain `RUNPOD_METRICS_TARGETS`, chat credentials,
+connection variables and redeploy; retain the chat target variables, chat credentials,
 the startup script and `/prometheus`. Existing time series remain available.
 
 Local/CI checks:
@@ -62,17 +62,22 @@ Collects and stores inference and GPU metrics from the token-protected relay in
 - `scripts/start-prometheus.sh`: generates runtime configuration from environment
   variables, stores the bearer token in a private temporary file, and starts
   Prometheus. It scrapes every 15 seconds with a 12-second timeout.
-- `RUNPOD_METRICS_TARGETS` accepts comma-separated hostnames. It overrides the
-  legacy single `RUNPOD_METRICS_TARGET`; both formats use the existing token.
-- `scripts/test_start_prometheus.py` checks legacy/multiple target rendering,
-  invalid targets, and credential-file privacy on a POSIX system.
+- `RUNPOD_4BIT_POD_ID` and `RUNPOD_BF16_POD_ID` each take a bare Pod ID. Each
+  non-empty ID adds `<pod>-8889.proxy.runpod.net` to the `vllm` job with a `profile`
+  label of `4bit` or `bf16`; an empty or unset ID skips that profile. A malformed
+  ID, or no target at all, fails startup before any configuration is written.
+- `RUNPOD_METRICS_TARGETS` (comma-separated hostnames) and the single
+  `RUNPOD_METRICS_TARGET` it overrides are the old variables. They are used, without
+  a `profile` label, only when both Pod IDs are empty or unset.
+- `scripts/test_start_prometheus.py` checks Pod ID, legacy and multiple target
+  rendering, invalid values, and credential-file privacy on a POSIX system.
 - `prometheus.example.yml`: reference configuration; the image generates its
   actual configuration at startup rather than loading this example.
 - `scripts/check-deployment.py`: validates a locally reachable Prometheus endpoint.
 
 Keep the Runpod model API private. The relay on port 8889 permits only protected
-metrics access. After a Pod migration, replace that Pod's port-8889 hostname in
-`RUNPOD_METRICS_TARGETS`; retain the matching token on the Pod's persistent volume.
+metrics access. After a Pod migration, replace that profile's Pod ID variable;
+retain the matching token on the Pod's persistent volume.
 
 ## Build
 
@@ -89,10 +94,11 @@ the running service or its persistent metrics history.
 ## Railway
 
 - Service name `prometheus`, `PORT=9090`, persistent volume `/prometheus`.
-- Current Pods, hostnames only, in the existing `vllm` job:
-  `RUNPOD_METRICS_TARGETS=66j3wfha6suokg-8889.proxy.runpod.net,8l7n75h7m4tma8-8889.proxy.runpod.net`
-  (`bf16` Pod `66j3wfha6suokg`, RTX PRO 6000; `4bit` Pod `8l7n75h7m4tma8`, RTX PRO 4500).
-  It overrides the single-target fallback `RUNPOD_METRICS_TARGET`, which names the BF16 Pod.
+- One bare Pod ID per profile, for example `RUNPOD_4BIT_POD_ID=<4bit-pod-id>` and
+  `RUNPOD_BF16_POD_ID=<bf16-pod-id>`. Both targets are in the existing `vllm` job.
+  If either is set, the old target variables are ignored. Remove both Pod IDs to
+  return to the old variables. Each profile's current Pod is recorded only in the
+  current-runtime records of `llm-inference-server`.
 - `RUNPOD_METRICS_TOKEN` must match each Pod's `/workspace/monitoring/metrics-token`;
   both Pods use the same token. A Pod whose relay is not running (stopped Pod or
   `METRICS_ENABLED` off) shows as down without affecting the other target.
@@ -136,31 +142,40 @@ For rollback with the current legacy image, clear the custom start command and
 redeploy. The original `RUNPOD_METRICS_TARGET` and token remain configured, so the
 image returns to its original single-target behavior. Keep `/prometheus` attached
 to retain history. After a future image release includes the new launcher,
-`RUNPOD_METRICS_TARGETS` can also be reduced to the original target for rollback.
+`RUNPOD_METRICS_TARGETS` can also be reduced to the original target for rollback,
+with both Pod ID variables removed. The legacy launcher ignores the Pod IDs.
 
 ### Pod migrations
 
-When a profile moves to a new Pod, replace only that Pod's hostname in
-`RUNPOD_METRICS_TARGETS` on the existing Railway Prometheus service and redeploy.
-Keep the bearer token, startup script, image, resource/retention settings and
-`/prometheus` volume.
+When a profile moves to a new Pod, replace only that profile's
+`RUNPOD_4BIT_POD_ID` or `RUNPOD_BF16_POD_ID` on the existing Railway Prometheus
+service and redeploy. Keep the bearer token, startup script, image,
+resource/retention settings and `/prometheus` volume. No change in this repository
+is needed.
 
-The new hostname produces a new `instance` label, while previously stored
-series retain the old hostname. The existing Grafana Pod query variable discovers
-the new target and all existing panels can use it. Historical Pod options can
-remain visible for time ranges containing old samples. Verify both current
-targets and both `gpu_exporter_up` series equal 1. Stop the old Pod only
-after the new application connection and monitoring pass verification.
+The running service uses the Pod IDs only after `PROMETHEUS_STARTUP_SCRIPT` holds
+this version of `scripts/start-prometheus.sh`; merging a PR does not update it.
+While the service still uses the old variables, replace that Pod's hostname in
+`RUNPOD_METRICS_TARGETS` instead. Setting only one Pod ID stops scraping every
+Pod that only the old variables name.
 
-For migration rollback, first start and verify the retained old Pod, replace
-only its hostname in `RUNPOD_METRICS_TARGETS`, and redeploy Prometheus without
-replacing its persistent volume. Coordinate frontend routing and the GitHub BF16
-deployment target with the backend migration guide.
+The new Pod produces a new `instance` label with the same `profile` label, while
+previously stored series retain the old hostname. The existing Grafana Pod query
+variable discovers the new target. Historical Pod options can remain visible for
+time ranges containing old samples. Verify that `up` and `gpu_exporter_up` equal 1
+for each profile whose Pod should be running. Stop the old Pod only after the new
+application connection and monitoring pass verification.
+
+For migration rollback, first start and verify the retained old Pod, restore only
+that profile's Pod ID, and redeploy Prometheus without replacing its persistent
+volume. Coordinate frontend routing and the GitHub BF16 deployment target with the
+backend migration guide.
 
 ## Local Docker
 
 Create the shared network once with `docker network create llm-monitoring`
 (skip if it exists). Copy `.env.example` to `.env`, set the matching metrics token,
+replace both placeholder Pod IDs (or empty the one you do not scrape),
 and run `docker compose up -d --build`. The endpoint binds only to
 http://127.0.0.1:9090. Run `python scripts/check-deployment.py` to validate it.
 

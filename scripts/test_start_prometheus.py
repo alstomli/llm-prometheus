@@ -22,6 +22,7 @@ class StartupTests(unittest.TestCase):
             source = source.replace('/tmp/', root.as_posix() + '/').replace('/bin/prometheus', stub.as_posix())
             env = {key: value for key, value in os.environ.items()
                    if key not in ('RUNPOD_METRICS_TOKEN', 'RUNPOD_METRICS_TARGET', 'RUNPOD_METRICS_TARGETS',
+                                  'RUNPOD_4BIT_POD_ID', 'RUNPOD_BF16_POD_ID',
                                   'FLUX2_METRICS_TARGET', 'FLUX2_METRICS_TOKEN', 'FLUX2_ALERT_RULES')}
             env.update(variables)
             result = subprocess.run([SHELL, '-c', source], env=env, text=True, capture_output=True)
@@ -63,27 +64,118 @@ class StartupTests(unittest.TestCase):
             self.assertEqual(mode, 0o600)
         self.assertNotIn('x' * 64, config + result.stdout + result.stderr)
 
-    def test_current_bf16_and_4bit_relays_share_the_vllm_job(self):
-        bf16 = '66j3wfha6suokg-8889.proxy.runpod.net'
-        four_bit = '8l7n75h7m4tma8-8889.proxy.runpod.net'
+    def test_pod_ids_give_one_labelled_target_per_profile_in_the_vllm_job(self):
         result, config, _ = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64,
-                                         'RUNPOD_METRICS_TARGET': bf16,
-                                         'RUNPOD_METRICS_TARGETS': f'{bf16},{four_bit}'})
+                                         'RUNPOD_4BIT_POD_ID': 'fourbitpod1', 'RUNPOD_BF16_POD_ID': 'bf16pod2'})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(config.count('job_name:'), 1)
         self.assertIn('job_name: vllm', config)
         self.assertIn('scheme: https', config)
-        self.assertEqual(re.findall(r'- "([^"]+)"', config), [bf16, four_bit])
+        self.assertEqual(config.split('static_configs:\n')[1],
+                         '      - targets:\n'
+                         '          - "fourbitpod1-8889.proxy.runpod.net"\n'
+                         '        labels:\n'
+                         '          profile: "4bit"\n'
+                         '      - targets:\n'
+                         '          - "bf16pod2-8889.proxy.runpod.net"\n'
+                         '        labels:\n'
+                         '          profile: "bf16"\n')
+        # Prometheus keeps its default instance label only if nothing sets or relabels it.
+        self.assertNotIn('instance', config)
+        self.assertNotIn('relabel', config)
         self.assertNotIn('x' * 64, config + result.stdout + result.stderr)
 
-    def test_examples_list_only_current_pods(self):
+    def test_one_pod_id_scrapes_only_that_profile(self):
+        cases = [
+            ({'RUNPOD_4BIT_POD_ID': 'fourbitpod1'}, 'fourbitpod1', '4bit'),
+            ({'RUNPOD_4BIT_POD_ID': 'fourbitpod1', 'RUNPOD_BF16_POD_ID': ''}, 'fourbitpod1', '4bit'),
+            ({'RUNPOD_BF16_POD_ID': 'bf16pod2'}, 'bf16pod2', 'bf16'),
+            ({'RUNPOD_4BIT_POD_ID': '', 'RUNPOD_BF16_POD_ID': 'bf16pod2'}, 'bf16pod2', 'bf16'),
+        ]
+        for variables, pod, profile in cases:
+            with self.subTest(variables=variables):
+                result, config, _ = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64, **variables})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(re.findall(r'- "([^"]+)"', config), [f'{pod}-8889.proxy.runpod.net'])
+                self.assertEqual(re.findall(r'profile: "([^"]+)"', config), [profile])
+
+    def test_malformed_pod_id_fails_before_generating_config(self):
+        for name, other in (('RUNPOD_4BIT_POD_ID', 'RUNPOD_BF16_POD_ID'),
+                            ('RUNPOD_BF16_POD_ID', 'RUNPOD_4BIT_POD_ID')):
+            for pod in ['pod1-8889.proxy.runpod.net', 'https://pod1', 'pod1-8889', 'pod1,pod2', 'POD1',
+                        ' ', ' pod1', 'pod1\n', 'pod1\n  evil: true', 'pod1"', 'pod1;echo unsafe', '*']:
+                for extra in ({}, {other: 'goodpod1'}, {'RUNPOD_METRICS_TARGETS': 'old.example'}):
+                    with self.subTest(name=name, pod=pod, extra=extra):
+                        result, config, mode = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64, name: pod, **extra})
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(config, '')
+                        self.assertIsNone(mode)
+                        self.assertIn(name, result.stderr)
+                        self.assertNotIn('x' * 64, result.stdout + result.stderr)
+
+    def test_no_target_from_either_source_fails_before_generating_config(self):
+        empty = {name: '' for name in ('RUNPOD_4BIT_POD_ID', 'RUNPOD_BF16_POD_ID',
+                                       'RUNPOD_METRICS_TARGETS', 'RUNPOD_METRICS_TARGET')}
+        for variables in ({}, empty):
+            with self.subTest(variables=variables):
+                result, config, mode = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64, **variables})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(config, '')
+                self.assertIsNone(mode)
+                self.assertIn('RUNPOD_4BIT_POD_ID', result.stderr)
+                self.assertNotIn('x' * 64, result.stdout + result.stderr)
+
+    def test_any_pod_id_overrides_the_old_target_variables(self):
+        for name in ('RUNPOD_4BIT_POD_ID', 'RUNPOD_BF16_POD_ID'):
+            # The old list is ignored even when it would not be accepted by itself.
+            for old in ('old.example', 'https://old.example/metrics'):
+                with self.subTest(name=name, old=old):
+                    result, config, _ = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64, name: 'newpod1',
+                                                     'RUNPOD_METRICS_TARGET': old, 'RUNPOD_METRICS_TARGETS': old})
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(re.findall(r'- "([^"]+)"', config), ['newpod1-8889.proxy.runpod.net'])
+
+    def test_empty_pod_ids_fall_back_to_old_targets_without_a_profile_label(self):
+        for old in ('RUNPOD_METRICS_TARGET', 'RUNPOD_METRICS_TARGETS'):
+            with self.subTest(old=old):
+                result, config, _ = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64, old: 'old-8889.proxy.runpod.net',
+                                                 'RUNPOD_4BIT_POD_ID': '', 'RUNPOD_BF16_POD_ID': ''})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(re.findall(r'- "([^"]+)"', config), ['old-8889.proxy.runpod.net'])
+                self.assertNotIn('profile', config)
+                self.assertNotIn('labels', config)
+
+    def test_flux_job_is_the_same_with_pod_ids_as_with_old_targets(self):
+        flux = {'RUNPOD_METRICS_TOKEN': 'chat-secret-' + 'x' * 40,
+                'FLUX2_METRICS_TARGET': 'images-8889.proxy.runpod.net',
+                'FLUX2_METRICS_TOKEN': 'image-secret-' + 'y' * 40,
+                'FLUX2_ALERT_RULES': Path(__file__).parent.parent.joinpath('rules/flux2-alerts.yml').read_text()}
+        result, config, _ = self.render({**flux, 'RUNPOD_4BIT_POD_ID': 'fourbitpod1', 'RUNPOD_BF16_POD_ID': 'bf16pod2'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        _, old_config, _ = self.render({**flux, 'RUNPOD_METRICS_TARGET': 'old.example'})
+        chat, job = config.split('  - job_name: flux2')
+        old_job = old_config.split('  - job_name: flux2')[1]
+
+        def without_directory(text):
+            # Each render writes to its own temporary directory.
+            return re.sub(r'credentials_file: .*/', 'credentials_file: ', text)
+        self.assertEqual(without_directory(job), without_directory(old_job))
+        self.assertIn('- "images-8889.proxy.runpod.net"', job)
+        self.assertNotIn('profile', job)
+        self.assertEqual(chat.count('profile:'), 2)
+        self.assertIn('rule_files:', chat)
+        for secret in (flux['RUNPOD_METRICS_TOKEN'], flux['FLUX2_METRICS_TOKEN']):
+            self.assertNotIn(secret, config + result.stdout + result.stderr)
+
+    def test_examples_and_tests_name_no_real_pod(self):
         root = Path(__file__).parent.parent
-        current = {'66j3wfha6suokg', '8l7n75h7m4tma8'}
-        for name in ('prometheus.example.yml', '.env.example', 'README.md'):
+        # Real Pod IDs are 14 lower-case letters and digits; placeholders here are not.
+        pod_id = re.compile(r'\b(?=[a-z]*[0-9])(?=[0-9]*[a-z])[a-z0-9]{14}\b')
+        for name in ('prometheus.example.yml', '.env.example', 'compose.yaml', 'README.md',
+                     'scripts/start-prometheus.sh', 'scripts/test_start_prometheus.py'):
             with self.subTest(file=name):
-                text = (root / name).read_text()
-                pods = set(re.findall(r'\b([a-z0-9]{14})-888[89]\.proxy\.runpod\.net', text))
-                self.assertEqual(pods, current)
+                text = (root / name).read_text(encoding='utf-8')
+                self.assertEqual(pod_id.findall(text), [])
 
     def test_invalid_targets_fail_before_generating_config(self):
         for targets in ['', 'https://host.example/metrics', 'a.example,,b.example', 'a.example,',

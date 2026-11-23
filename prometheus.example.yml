@@ -11,8 +11,13 @@ scrape_configs:
       credentials_file: /tmp/metrics-token
     static_configs:
       - targets:
-          - "66j3wfha6suokg-8889.proxy.runpod.net"
-          - "8l7n75h7m4tma8-8889.proxy.runpod.net"
+          - "4bit-pod-8889.proxy.runpod.net"
+        labels:
+          profile: "4bit"
+      - targets:
+          - "bf16-pod-8889.proxy.runpod.net"
+        labels:
+          profile: "bf16"
   # Optional image backend; uses a separate bearer credential file.
   - job_name: flux2
     scheme: https
