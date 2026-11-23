@@ -65,7 +65,7 @@ class StartupTests(unittest.TestCase):
 
     def test_current_bf16_and_4bit_relays_share_the_vllm_job(self):
         bf16 = '66j3wfha6suokg-8889.proxy.runpod.net'
-        four_bit = '8l7n75h7m4tma8-8889.proxy.runpod.net'
+        four_bit = 'stfd3sdb8furvq-8889.proxy.runpod.net'
         result, config, _ = self.render({'RUNPOD_METRICS_TOKEN': 'x' * 64,
                                          'RUNPOD_METRICS_TARGET': bf16,
                                          'RUNPOD_METRICS_TARGETS': f'{bf16},{four_bit}'})
@@ -78,7 +78,7 @@ class StartupTests(unittest.TestCase):
 
     def test_examples_list_only_current_pods(self):
         root = Path(__file__).parent.parent
-        current = {'66j3wfha6suokg', '8l7n75h7m4tma8'}
+        current = {'66j3wfha6suokg', 'stfd3sdb8furvq'}
         for name in ('prometheus.example.yml', '.env.example', 'README.md'):
             with self.subTest(file=name):
                 text = (root / name).read_text()

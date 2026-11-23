@@ -90,8 +90,8 @@ the running service or its persistent metrics history.
 
 - Service name `prometheus`, `PORT=9090`, persistent volume `/prometheus`.
 - Current Pods, hostnames only, in the existing `vllm` job:
-  `RUNPOD_METRICS_TARGETS=66j3wfha6suokg-8889.proxy.runpod.net,8l7n75h7m4tma8-8889.proxy.runpod.net`
-  (`bf16` Pod `66j3wfha6suokg`, RTX PRO 6000; `4bit` Pod `8l7n75h7m4tma8`, RTX PRO 4500).
+  `RUNPOD_METRICS_TARGETS=66j3wfha6suokg-8889.proxy.runpod.net,stfd3sdb8furvq-8889.proxy.runpod.net`
+  (`bf16` Pod `66j3wfha6suokg`, RTX PRO 6000; `4bit` Pod `stfd3sdb8furvq`, RTX PRO 4500).
   It overrides the single-target fallback `RUNPOD_METRICS_TARGET`, which names the BF16 Pod.
 - `RUNPOD_METRICS_TOKEN` must match each Pod's `/workspace/monitoring/metrics-token`;
   both Pods use the same token. A Pod whose relay is not running (stopped Pod or
